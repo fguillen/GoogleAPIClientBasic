@@ -1,6 +1,7 @@
 # require 'googleauth'
 # require 'google/apis/compute_v1'
 
+require "benchmark"
 
 require 'google/api_client'
 require 'google/api_client/client_secrets'
@@ -22,9 +23,47 @@ module GoogleApiClientBasic
   CACHED_API_FILE = "#{ROOT_PATH}/secret/drive-#{API_VERSION}.cache"
   CREDENTIAL_STORE_FILE = "#{ROOT_PATH}/secret/credential-oauth2.json"
 
+
+  def self.run
+    client = get_client("#{ROOT_PATH}/secret/client_secret.json", "#{ROOT_PATH}/secret/credential-oauth2.json")
+    drive = get_drive(client)
+    insert_file(client, drive)
+  end
+
+  def self.store_credentials(client_secrets_path, credentials_storage_path)
+    authorization = nil
+    file_storage = Google::APIClient::FileStorage.new(credentials_storage_path)
+
+    if file_storage.authorization.nil?
+      client_secrets = Google::APIClient::ClientSecrets.load(client_secrets_path)
+
+      flow =
+        Google::APIClient::InstalledAppFlow.new(
+          :client_id => client_secrets.client_id,
+          :client_secret => client_secrets.client_secret,
+          :scope => ['https://www.googleapis.com/auth/drive']
+        )
+      authorization = flow.authorize(file_storage)
+    else
+      authorization = file_storage.authorization
+    end
+
+    authorization
+  end
+
+  def self.get_client(client_secrets_path, credentials_storage_path)
+    client = Google::APIClient.new(:application_name => 'Ruby Drive sample', :application_version => '1.0.0')
+    client.authorization = store_credentials(client_secrets_path, credentials_storage_path)
+
+    client
+  end
+
+  def self.get_drive(client)
+    client.discovered_api("drive", "v2")
+  end
+
   def self.setup
-    client = Google::APIClient.new(:application_name => 'Ruby Drive sample',
-        :application_version => '1.0.0')
+    client = Google::APIClient.new(:application_name => 'Ruby Drive sample', :application_version => '1.0.0')
 
     # FileStorage stores auth credentials in a file, so they survive multiple runs
     # of the application. This avoids prompting the user for authorization every
@@ -54,7 +93,17 @@ module GoogleApiClientBasic
         drive = Marshal.load(file)
       end
     else
-      drive = client.discovered_api('drive', API_VERSION)
+      drive = nil
+
+      puts "XXX: starting discovered_api"
+
+      time =
+        Benchmark.realtime do
+          drive = client.discovered_api('drive', API_VERSION)
+        end
+
+      puts "XXX: time to discovered_api: #{time}"
+
       File.open(CACHED_API_FILE, 'w') do |file|
         Marshal.dump(drive, file)
       end
@@ -85,8 +134,4 @@ module GoogleApiClientBasic
     jj result.data.to_hash
   end
 
-  def self.run
-    client, drive = setup()
-    insert_file(client, drive)
-  end
 end
